@@ -1,7 +1,5 @@
 using UnityEngine;
-#if ENABLE_INPUT_SYSTEM && STARTER_ASSETS_PACKAGES_CHECKED
 using UnityEngine.InputSystem;
-#endif
 
 namespace StarterAssets
 {
@@ -22,33 +20,43 @@ namespace StarterAssets
         [SerializeField] private bool cursorInputForLook = true;
 #endif
 
-#if ENABLE_INPUT_SYSTEM && STARTER_ASSETS_PACKAGES_CHECKED
-        public void OnMove(InputAction.CallbackContext value)
+        private void Awake()
         {
-            MoveInput(value.ReadValue<Vector2>());
-        }
-
-        public void OnLook(InputAction.CallbackContext value)
-        {
-            if (cursorInputForLook)
+            var playerInput = GetComponent<PlayerInput>();
+            if (playerInput == null)
             {
-                LookInput(value.ReadValue<Vector2>());
+                Debug.LogError("[INPUTS] No se encontró PlayerInput en el GameObject!");
+                return;
             }
-        }
 
-        public void OnJump(InputAction.CallbackContext value)
-        {
-            JumpInput(value.action.triggered);
-        }
+            Debug.Log("[INPUTS] Suscribiendo eventos manualmente...");
 
-        public void OnSprint(InputAction.CallbackContext value)
-        {
-            SprintInput(value.action.ReadValue<float>() == 1);
-        }
-#else
-	// old input sys if we do decide to have it (most likely wont)...
-#endif
+            var actions = playerInput.actions;
 
+            actions["Move"].performed += ctx =>
+            {
+                MoveInput(ctx.ReadValue<Vector2>());
+                Debug.Log("OnMove: " + move);
+            };
+            actions["Move"].canceled += ctx =>
+            {
+                MoveInput(Vector2.zero);
+            };
+
+            actions["Look"].performed += ctx =>
+            {
+                if (cursorInputForLook)
+                    LookInput(ctx.ReadValue<Vector2>());
+            };
+
+            actions["Jump"].performed += ctx => JumpInput(true);
+            actions["Jump"].canceled += ctx => JumpInput(false);
+
+            actions["Sprint"].performed += ctx => SprintInput(ctx.ReadValue<float>() == 1);
+            actions["Sprint"].canceled += ctx => SprintInput(false);
+
+            Debug.Log("[INPUTS] Eventos suscritos OK");
+        }
 
         public void MoveInput(Vector2 newMoveDirection)
         {

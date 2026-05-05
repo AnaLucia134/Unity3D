@@ -1,7 +1,5 @@
 ﻿using UnityEngine;
-#if ENABLE_INPUT_SYSTEM && STARTER_ASSETS_PACKAGES_CHECKED
 using UnityEngine.InputSystem;
-#endif
 
 /* Note: animations are called via the controller for both the character and capsule using animator null checks
  */
@@ -9,9 +7,7 @@ using UnityEngine.InputSystem;
 namespace StarterAssets
 {
     [RequireComponent(typeof(CharacterController))]
-#if ENABLE_INPUT_SYSTEM && STARTER_ASSETS_PACKAGES_CHECKED
     [RequireComponent(typeof(PlayerInput))]
-#endif
     public class FirstPersonController : MonoBehaviour
     {
         [Header("Player")]
@@ -84,8 +80,15 @@ namespace StarterAssets
 
         private void Start()
         {
+            Debug.Log("[FPC] Start - PlayerCapsule iniciado");
+
             _controller = GetComponent<CharacterController>();
             _input = GetComponent<StarterAssetsInputs>();
+
+            if (_input == null)
+                Debug.LogError("[FPC] ERROR: No se encontró StarterAssetsInputs!");
+            else
+                Debug.Log("[FPC] StarterAssetsInputs encontrado OK");
 
             // reset our timeouts on start
             _jumpTimeoutDelta = jumpTimeout;
@@ -113,6 +116,9 @@ namespace StarterAssets
 
         private void CameraRotation()
         {
+            if (cinemachineCameraTarget == null)
+                return;
+
             // if there is an input
             if (_input.GetLook().sqrMagnitude >= _threshold)
             {
@@ -132,6 +138,9 @@ namespace StarterAssets
 
         private void Move()
         {
+            if (_input.GetMove() != Vector2.zero)
+                Debug.Log("Move input: " + _input.GetMove() + " | grounded: " + grounded);
+
             // set target speed based on move speed, sprint speed and if sprint is pressed
             float targetSpeed = _input.IsSprinting() ? sprintSpeed : moveSpeed;
 

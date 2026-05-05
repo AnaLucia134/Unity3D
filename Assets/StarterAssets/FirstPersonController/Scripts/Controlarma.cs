@@ -6,15 +6,14 @@ using UnityEngine.InputSystem;
 public class ControlArma : MonoBehaviour
 {
 	[SerializeField] private Arma arma;
- 
-	public void OnDisparar(InputAction.CallbackContext value)
+
+	private void Awake()
 	{
-    	arma.ProcesarEntrada(value.action.triggered);
+		GetComponent<PlayerInput>().actions["Disparar"].performed += ctx => arma.ProcesarEntrada(ctx.action.triggered);
 	}
 
 	public void Start()
 	{
 		Debug.Log("Control Arma");
 	}
-
 }
