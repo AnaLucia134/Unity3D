@@ -1,288 +1,265 @@
 using System.Collections;
 using UnityEngine;
+using UnityEngine.Serialization;
 
-/*
- * TipoArma - Enumeración que define los tipos de arma disponibles.
- *
- * Estandar:      Disparo único, sin comportamiento especial.
- * Escopeta:      Dispara múltiples proyectiles simultáneos con dispersión aleatoria.
- * Francotirador: Disparo único de alta precisión y largo alcance.
- * Rafaga:        Dispara varios proyectiles en secuencia con pausa entre cada uno.
- */
 public enum TipoArma
 {
     Estandar,
-    Escopeta,
-    Francotirador,
+    Shotgun,
+    Sniper,
     Rafaga
 }
 
 /*
- * Arma - Sistema de armas parametrizable.
+ * Arma
+ * ----
+ * Sistema de armas parametrizable usando raycasts.
  *
- * Permite configurar diferentes tipos de armas desde el Inspector de Unity
- * modificando los valores de los campos serializados. Un mismo script
- * cubre todos los comportamientos: disparo estándar, escopeta, francotirador
- * y ráfaga, sin necesidad de crear scripts adicionales.
+ * La idea principal del proyecto es que este mismo script permita crear
+ * diferentes armas desde el Inspector, sin crear una clase separada para
+ * cada una. El comportamiento cambia con el enum TipoArma y con los
+ * parametros serializados.
  *
- * Flujo de ejecución:
- * 1. ControlArma invoca ProcesarEntrada() al detectar la acción de disparo.
- * 2. ProcesarEntrada() selecciona la corrutina correspondiente según tipoArma.
- * 3. Disparar() o DispararRafaga() gestionan el cooldown y llaman a ProcesarRaycast().
- * 4. ProcesarRaycast() define cuántos proyectiles se lanzan y calcula su dirección.
- * 5. ProcesarDisparoIndividual() ejecuta el raycast, aplica daño y muestra el trail.
+ * Ejemplos de configuracion:
+ * - Shotgun: varios proyectiles por disparo, alcance corto y dispersion alta.
+ * - Sniper: un proyectil, alcance largo, mucho dano, cooldown alto y dispersion 0.
+ * - Rafaga: varios proyectiles separados por una pausa usando corrutina.
+ *
+ * Flujo:
+ * 1. ControlArma recibe la entrada del PlayerInput.
+ * 2. ControlArma llama a ProcesarEntrada().
+ * 3. El arma valida cooldown y tipo.
+ * 4. Se ejecutan uno o varios Physics.Raycast.
+ * 5. Si el impacto tiene Salud, se aplica dano con PerderSalud().
+ * 6. Se dibuja un TrailRenderer o una linea de debug para visualizar el disparo.
  */
 public class Arma : MonoBehaviour
 {
-    /* ============================================================
-     * Campos serializados - Configurables desde el Inspector
-     * ============================================================ */
-
-    [Header("Tipo de Arma")]
+    [Header("Configuracion del arma")]
+    // Define que comportamiento especial usara el arma actual.
     [SerializeField] private TipoArma tipoArma = TipoArma.Estandar;
 
-    [Header("Atributos Generales")]
-    // Cantidad de daño que aplica cada proyectil al impactar un objeto con Salud
-    [SerializeField] private float ataque = 5f;
+    // Cantidad de vida que pierde el objetivo por cada raycast que impacta.
+    [FormerlySerializedAs("ataque")]
+    [SerializeField, Min(0f)] private float danoPorProyectil = 5f;
 
-    // Tiempo en segundos entre cada disparo (cooldown)
-    [SerializeField] private float tiempoEntreDisparo = 0.5f;
+    // Cooldown general antes de permitir otro disparo completo.
+    [FormerlySerializedAs("tiempoEntreDisparo")]
+    [SerializeField, Min(0.01f)] private float tiempoEntreDisparos = 0.5f;
 
-    // Distancia máxima que recorre el raycast (alcance del arma)
-    [SerializeField] private float rango = 100f;
+    // Distancia maxima del raycast. Para sniper conviene un valor alto.
+    [FormerlySerializedAs("rango")]
+    [SerializeField, Min(1f)] private float alcance = 100f;
 
-    // Ángulo de dispersión en grados. 0 = precisión perfecta, >0 = desviación aleatoria
-    [SerializeField] private float dispersion = 0f;
+    // Variacion aleatoria en grados. 0 significa precision perfecta.
+    [FormerlySerializedAs("dispersion")]
+    [SerializeField, Range(0f, 45f)] private float dispersionGrados = 0f;
 
-    // Capas que el raycast puede detectar como objetivos válidos
-    [SerializeField] private LayerMask layerMask;
+    // Capas que el raycast puede detectar. Sirve para ignorar UI u objetos no impactables.
+    [FormerlySerializedAs("layerMask")]
+    [SerializeField] private LayerMask capasImpactables = ~0;
 
-    [Header("Escopeta")]
-    // Cantidad de proyectiles por disparo. Solo aplica cuando tipoArma = Escopeta
-    [SerializeField] private int balasPorDisparo = 1;
+    [Header("Shotgun")]
+    // Cantidad de raycasts simultaneos cuando TipoArma es Shotgun.
+    [FormerlySerializedAs("balasPorDisparo")]
+    [SerializeField, Min(1)] private int proyectilesPorDisparo = 6;
 
     [Header("Rafaga")]
-    // Cantidad de proyectiles por ráfaga. Solo aplica cuando tipoArma = Rafaga
-    [SerializeField] private int balasRafaga = 3;
+    // Cantidad de raycasts consecutivos cuando TipoArma es Rafaga.
+    [FormerlySerializedAs("balasRafaga")]
+    [SerializeField, Min(1)] private int proyectilesPorRafaga = 3;
 
-    // Tiempo en segundos entre cada proyectil de la ráfaga
-    [SerializeField] private float tiempoEntreBalasRafaga = 0.1f;
+    // Pausa entre cada raycast de la rafaga.
+    [FormerlySerializedAs("tiempoEntreBalasRafaga")]
+    [SerializeField, Min(0.01f)] private float tiempoEntreProyectilesRafaga = 0.12f;
 
-    [Header("GameObjects")]
-    [SerializeField] private Transform cameraPrimeraPersona;
-    [SerializeField] private Transform origenProyectil;
+    [Header("Referencias")]
+    // Punto desde donde se calcula el raycast. Normalmente es la camara del jugador.
+    [FormerlySerializedAs("cameraPrimeraPersona")]
+    [SerializeField] private Transform origenRaycast;
+
+    // Punto visual donde aparece el trail. Normalmente es la punta del arma.
+    [FormerlySerializedAs("origenProyectil")]
+    [SerializeField] private Transform origenVisual;
+
+    // Efecto visual del disparo. Si esta vacio, se dibuja una linea amarilla de debug.
     [SerializeField] private TrailRenderer trailPrefab;
 
-    /* ============================================================
-     * Estado interno
-     * ============================================================ */
+    // Efecto opcional en el punto de impacto.
+    [SerializeField] private GameObject efectoImpactoPrefab;
 
-    // Indica si el arma está lista para disparar (false durante el cooldown)
     private bool puedeDisparar = true;
+    private bool disparandoRafaga;
 
-    // Indica si se está ejecutando una ráfaga (bloquea nuevos disparos)
-    private bool enRafaga = false;
-
-    /* ============================================================
-     * Métodos públicos
-     * ============================================================ */
-
-    /*
-     * ProcesarEntrada - Punto de entrada del sistema de armas.
-     *
-     * Parámetros:
-     *   value - true si se presionó el botón de disparo.
-     *
-     * Lógica:
-     *   - Si no puede disparar o está en ráfaga, ignora la entrada.
-     *   - Si tipoArma es Rafaga, inicia la corrutina DispararRafaga().
-     *   - Para los demás tipos, inicia la corrutina Disparar().
-     */
-    public void ProcesarEntrada(bool value)
+    private void Awake()
     {
-        if (!puedeDisparar || !value || enRafaga) return;
-
-        switch (tipoArma)
+        if (origenRaycast == null && Camera.main != null)
         {
-            case TipoArma.Rafaga:
-                StartCoroutine(DispararRafaga());
-                break;
-            default:
-                StartCoroutine(Disparar());
-                break;
+            origenRaycast = Camera.main.transform;
+        }
+
+        if (origenVisual == null)
+        {
+            origenVisual = origenRaycast != null ? origenRaycast : transform;
         }
     }
 
-    /* ============================================================
-     * Corrutinas de disparo
-     * ============================================================ */
+    public void ProcesarEntrada(bool presionado)
+    {
+        if (!presionado || !puedeDisparar || disparandoRafaga)
+        {
+            return;
+        }
 
-    /*
-     * Disparar - Corrutina para disparo único (Estandar, Escopeta, Francotirador).
-     *
-     * Flujo:
-     *   1. Bloquea nuevos disparos (puedeDisparar = false).
-     *   2. Ejecuta ProcesarRaycast() según el tipo de arma.
-     *   3. Espera tiempoEntreDisparo segundos (cooldown).
-     *   4. Desbloquea nuevos disparos.
-     */
-    private IEnumerator Disparar()
+        if (tipoArma == TipoArma.Rafaga)
+        {
+            StartCoroutine(DispararRafaga());
+            return;
+        }
+
+        StartCoroutine(DispararUnaVez());
+    }
+
+    // Disparo normal: se ejecuta una vez y despues espera el cooldown.
+    private IEnumerator DispararUnaVez()
     {
         puedeDisparar = false;
-        ProcesarRaycast();
-        yield return new WaitForSecondsRealtime(tiempoEntreDisparo);
+        DispararGrupoDeRaycasts();
+
+        yield return new WaitForSeconds(tiempoEntreDisparos);
         puedeDisparar = true;
     }
 
-    /*
-     * DispararRafaga - Corrutina para disparo en ráfaga (tipo Rafaga).
-     *
-     * Flujo:
-     *   1. Bloquea puedeDisparar y enRafaga.
-     *   2. Itera balasRafaga veces, ejecutando ProcesarRaycast() en cada iteración.
-     *   3. Entre cada proyectil espera tiempoEntreBalasRafaga segundos
-     *      (excepto después del último).
-     *   4. Al terminar la ráfaga, espera tiempoEntreDisparo segundos (cooldown).
-     *   5. Desbloquea ambos flags.
-     */
+    // Rafaga: dispara varios raycasts uno por uno, separados por una pausa corta.
     private IEnumerator DispararRafaga()
     {
-        enRafaga = true;
         puedeDisparar = false;
+        disparandoRafaga = true;
 
-        for (int i = 0; i < balasRafaga; i++)
+        int cantidad = Mathf.Max(1, proyectilesPorRafaga);
+        for (int i = 0; i < cantidad; i++)
         {
-            ProcesarRaycast();
-            if (i < balasRafaga - 1)
+            DispararGrupoDeRaycasts();
+
+            if (i < cantidad - 1)
             {
-                yield return new WaitForSecondsRealtime(tiempoEntreBalasRafaga);
+                yield return new WaitForSeconds(tiempoEntreProyectilesRafaga);
             }
         }
 
-        yield return new WaitForSecondsRealtime(tiempoEntreDisparo);
+        yield return new WaitForSeconds(tiempoEntreDisparos);
+        disparandoRafaga = false;
         puedeDisparar = true;
-        enRafaga = false;
     }
 
-    /* ============================================================
-     * Procesamiento de raycast
-     * ============================================================ */
-
-    /*
-     * ProcesarRaycast - Define cuántos proyectiles se disparan.
-     *
-     * Si tipoArma es Escopeta, dispara balasPorDisparo proyectiles.
-     * Para los demás tipos, dispara un solo proyectil.
-     * Cada proyectil obtiene su propia dirección con CalcularDireccion()
-     * y se procesa con ProcesarDisparoIndividual().
-     */
-    private void ProcesarRaycast()
+    // Decide cuantos raycasts salen en este disparo. Shotgun usa varios; los demas usan uno.
+    private void DispararGrupoDeRaycasts()
     {
-        int cantidadBalas = tipoArma == TipoArma.Escopeta ? balasPorDisparo : 1;
+        int cantidad = tipoArma == TipoArma.Shotgun ? Mathf.Max(1, proyectilesPorDisparo) : 1;
 
-        for (int i = 0; i < cantidadBalas; i++)
+        for (int i = 0; i < cantidad; i++)
         {
-            Vector3 direccion = CalcularDireccion();
-            ProcesarDisparoIndividual(direccion);
+            DispararRaycast(CalcularDireccion());
         }
     }
 
-    /*
-     * ProcesarDisparoIndividual - Ejecuta un raycast individual.
-     *
-     * Parámetros:
-     *   direccion - Vector dirección normalizado del raycast.
-     *
-     * Si el raycast impacta un objeto dentro del rango:
-     *   - Muestra el trail hasta el punto de impacto.
-     *   - Si el objeto tiene componente Salud, le aplica daño.
-     * Si no impacta nada:
-     *   - Muestra el trail hasta el punto máximo de alcance.
-     */
-    private void ProcesarDisparoIndividual(Vector3 direccion)
+    // Ejecuta un raycast, aplica dano si impacta algo con Salud y crea el efecto visual.
+    private void DispararRaycast(Vector3 direccion)
     {
-        Vector3 origen = cameraPrimeraPersona.position;
-
-        if (Physics.Raycast(origen, direccion, out RaycastHit hit, rango, layerMask))
+        if (origenRaycast == null)
         {
-            TrailRenderer trail = Instantiate(trailPrefab, origenProyectil.position, Quaternion.identity);
-            StartCoroutine(MoverTrail(trail, origenProyectil.position, hit.point));
+            Debug.LogWarning("El arma no tiene origen de raycast asignado.");
+            return;
+        }
 
-            if (hit.transform.TryGetComponent<Salud>(out Salud saludObjetivo))
-            {
-                saludObjetivo.PerderSalud(ataque);
-            }
-        }
-        else
+        Vector3 inicioRaycast = origenRaycast.position;
+        Vector3 inicioVisual = origenVisual != null ? origenVisual.position : inicioRaycast;
+        Vector3 puntoFinal = inicioRaycast + direccion * alcance;
+
+        if (Physics.Raycast(inicioRaycast, direccion, out RaycastHit hit, alcance, capasImpactables, QueryTriggerInteraction.Ignore))
         {
-            TrailRenderer trail = Instantiate(trailPrefab, origenProyectil.position, Quaternion.identity);
-            Vector3 puntoFinal = origen + direccion * rango;
-            StartCoroutine(MoverTrail(trail, origenProyectil.position, puntoFinal));
+            puntoFinal = hit.point;
+            AplicarDano(hit);
+            CrearEfectoImpacto(hit);
         }
+
+        CrearTrail(inicioVisual, puntoFinal);
     }
 
-    /*
-     * CalcularDireccion - Calcula la dirección del proyectil con dispersión.
-     *
-     * Retorna:
-     *   Vector3 - Dirección normalizada del proyectil.
-     *
-     * Funcionamiento:
-     *   1. Toma cameraPrimeraPersona.forward como dirección base.
-     *   2. Convierte dispersion de grados a radianes.
-     *   3. Genera un desvío aleatorio en cada eje (X, Y, Z) dentro del
-     *      rango [-dispersionRad, +dispersionRad].
-     *   4. Suma el desvío a la dirección base.
-     *   5. Normaliza el vector resultante.
-     *
-     *   dispersion = 0 → precisión perfecta (francotirador).
-     *   dispersion > 0 → cada bala se desvía aleatoriamente (escopeta).
-     */
+    // Calcula la direccion final del proyectil. La dispersion permite simular shotgun.
     private Vector3 CalcularDireccion()
     {
-        Vector3 direccion = cameraPrimeraPersona.forward;
-        float dispersionRad = dispersion * Mathf.Deg2Rad;
+        Vector3 direccionBase = origenRaycast != null ? origenRaycast.forward : transform.forward;
 
-        float desvioX = Random.Range(-dispersionRad, dispersionRad);
-        float desvioY = Random.Range(-dispersionRad, dispersionRad);
-        float desvioZ = Random.Range(-dispersionRad, dispersionRad);
+        if (dispersionGrados <= 0f)
+        {
+            return direccionBase;
+        }
 
-        Vector3 direccionDesviada = new Vector3(
-            direccion.x + desvioX,
-            direccion.y + desvioY,
-            direccion.z + desvioZ
-        );
-
-        return direccionDesviada.normalized;
+        float desvioX = Random.Range(-dispersionGrados, dispersionGrados);
+        float desvioY = Random.Range(-dispersionGrados, dispersionGrados);
+        return Quaternion.Euler(desvioX, desvioY, 0f) * direccionBase;
     }
 
-    /* ============================================================
-     * Efecto visual del proyectil
-     * ============================================================ */
-
-    /*
-     * MoverTrail - Anima el trail del proyectil desde el origen hasta el impacto.
-     *
-     * Parámetros:
-     *   trail       - Instancia del TrailRenderer a mover.
-     *   puntoInicio - Posición inicial del trail (boca del arma).
-     *   puntoFinal  - Posición final del trail (punto de impacto o alcance máximo).
-     *
-     * Utiliza Vector3.Lerp para interpolar la posición del trail.
-     * Al finalizar, destruye el objeto después del tiempo de vida del trail.
-     */
-    private IEnumerator MoverTrail(TrailRenderer trail, Vector3 puntoInicio, Vector3 puntoFinal)
+    // Usa la clase Salud existente en el proyecto para respetar la estructura actual.
+    private void AplicarDano(RaycastHit hit)
     {
-        float t = 0f;
-
-        while (t < 1)
+        Salud salud = hit.collider.GetComponentInParent<Salud>();
+        if (salud != null)
         {
-            trail.transform.position = Vector3.Lerp(puntoInicio, puntoFinal, t);
-            t += Time.deltaTime / trail.time;
+            salud.PerderSalud(danoPorProyectil);
+        }
+    }
+
+    // Instancia un prefab opcional en el punto donde pego el raycast.
+    private void CrearEfectoImpacto(RaycastHit hit)
+    {
+        if (efectoImpactoPrefab == null)
+        {
+            return;
+        }
+
+        Quaternion rotacion = Quaternion.LookRotation(hit.normal);
+        Destroy(Instantiate(efectoImpactoPrefab, hit.point, rotacion), 2f);
+    }
+
+    // Crea el trail; si no hay prefab asignado, dibuja una linea temporal para pruebas.
+    private void CrearTrail(Vector3 inicio, Vector3 fin)
+    {
+        if (trailPrefab == null)
+        {
+            Debug.DrawLine(inicio, fin, Color.yellow, 0.25f);
+            return;
+        }
+
+        TrailRenderer trail = Instantiate(trailPrefab, inicio, Quaternion.identity);
+        StartCoroutine(MoverTrail(trail, inicio, fin));
+    }
+
+    // Mueve el trail desde la punta del arma hasta el punto final del raycast.
+    private IEnumerator MoverTrail(TrailRenderer trail, Vector3 inicio, Vector3 fin)
+    {
+        float duracion = Mathf.Max(0.01f, trail.time);
+        float tiempo = 0f;
+
+        while (tiempo < duracion)
+        {
+            trail.transform.position = Vector3.Lerp(inicio, fin, tiempo / duracion);
+            tiempo += Time.deltaTime;
             yield return null;
         }
 
-        trail.transform.position = puntoFinal;
+        trail.transform.position = fin;
         Destroy(trail.gameObject, trail.time);
+    }
+
+    private void OnValidate()
+    {
+        proyectilesPorDisparo = Mathf.Max(1, proyectilesPorDisparo);
+        proyectilesPorRafaga = Mathf.Max(1, proyectilesPorRafaga);
+        tiempoEntreDisparos = Mathf.Max(0.01f, tiempoEntreDisparos);
+        tiempoEntreProyectilesRafaga = Mathf.Max(0.01f, tiempoEntreProyectilesRafaga);
+        alcance = Mathf.Max(1f, alcance);
+        danoPorProyectil = Mathf.Max(0f, danoPorProyectil);
     }
 }
