@@ -5,6 +5,8 @@ namespace StarterAssets
 {
     public class StarterAssetsInputs : MonoBehaviour
     {
+        private PlayerInput playerInput;
+
         [Header("Character Input Values")]
         [SerializeField] private Vector2 move;
         [SerializeField] private Vector2 look;
@@ -22,7 +24,7 @@ namespace StarterAssets
 
         private void Awake()
         {
-            var playerInput = GetComponent<PlayerInput>();
+            playerInput = GetComponent<PlayerInput>();
             if (playerInput == null)
             {
                 Debug.LogError("[INPUTS] No se encontró PlayerInput en el GameObject!");
@@ -101,6 +103,11 @@ namespace StarterAssets
         public bool IsAnalog()
         {
             return analogMovement;
+        }
+
+        public bool IsCurrentDeviceMouse()
+        {
+            return playerInput != null && playerInput.currentControlScheme == "KeyboardMouse";
         }
 
 #if !UNITY_IOS || !UNITY_ANDROID

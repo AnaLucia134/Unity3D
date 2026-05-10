@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Serialization;
 
 /* Note: animations are called via the controller for both the character and capsule using animator null checks
  */
@@ -12,42 +13,57 @@ namespace StarterAssets
     {
         [Header("Player")]
         [Tooltip("Move speed of the character in m/s")]
+        [FormerlySerializedAs("MoveSpeed")]
         public float moveSpeed = 4.0f;
         [Tooltip("Sprint speed of the character in m/s")]
+        [FormerlySerializedAs("SprintSpeed")]
         public float sprintSpeed = 6.0f;
         [Tooltip("Rotation speed of the character")]
+        [FormerlySerializedAs("RotationSpeed")]
         public float rotationSpeed = 1.0f;
         [Tooltip("Acceleration and deceleration")]
+        [FormerlySerializedAs("SpeedChangeRate")]
         public float speedChangeRate = 10.0f;
 
         [Space(10)]
         [Tooltip("The height the player can jump")]
+        [FormerlySerializedAs("JumpHeight")]
         public float jumpHeight = 1.2f;
         [Tooltip("The character uses its own gravity value. The engine default is -9.81f")]
+        [FormerlySerializedAs("Gravity")]
         public float gravity = -15.0f;
 
         [Space(10)]
         [Tooltip("Time required to pass before being able to jump again. Set to 0f to instantly jump again")]
+        [FormerlySerializedAs("JumpTimeout")]
         public float jumpTimeout = 0.1f;
         [Tooltip("Time required to pass before entering the fall state. Useful for walking down stairs")]
+        [FormerlySerializedAs("FallTimeout")]
         public float fallTimeout = 0.15f;
 
         [Header("Player Grounded")]
         [Tooltip("If the character is grounded or not. Not part of the CharacterController built in grounded check")]
+        [FormerlySerializedAs("Grounded")]
         public bool grounded = true;
         [Tooltip("Useful for rough ground")]
+        [FormerlySerializedAs("GroundedOffset")]
         public float groundedOffset = -0.14f;
         [Tooltip("The radius of the grounded check. Should match the radius of the CharacterController")]
+        [FormerlySerializedAs("GroundedRadius")]
         public float groundedRadius = 0.5f;
         [Tooltip("What layers the character uses as ground")]
+        [FormerlySerializedAs("GroundLayers")]
         public LayerMask groundLayers;
 
         [Header("Cinemachine")]
         [Tooltip("The follow target set in the Cinemachine Virtual Camera that the camera will follow")]
+        [FormerlySerializedAs("CinemachineCameraTarget")]
         public GameObject cinemachineCameraTarget;
         [Tooltip("How far in degrees can you move the camera up")]
+        [FormerlySerializedAs("TopClamp")]
         public float topClamp = 90.0f;
         [Tooltip("How far in degrees can you move the camera down")]
+        [FormerlySerializedAs("BottomClamp")]
         public float bottomClamp = -90.0f;
 
         // cinemachine
@@ -90,6 +106,20 @@ namespace StarterAssets
             else
                 Debug.Log("[FPC] StarterAssetsInputs encontrado OK");
 
+            if (cinemachineCameraTarget == null)
+            {
+                var target = GameObject.FindGameObjectWithTag("CinemachineTarget");
+                if (target != null)
+                {
+                    cinemachineCameraTarget = target;
+                    Debug.LogWarning("[FPC] CinemachineCameraTarget estaba vacío; se asignó automáticamente por tag.");
+                }
+                else
+                {
+                    Debug.LogError("[FPC] ERROR: No se encontró CinemachineCameraTarget. Asigna el target de cámara en el Inspector.");
+                }
+            }
+
             // reset our timeouts on start
             _jumpTimeoutDelta = jumpTimeout;
             _fallTimeoutDelta = fallTimeout;
@@ -122,8 +152,10 @@ namespace StarterAssets
             // if there is an input
             if (_input.GetLook().sqrMagnitude >= _threshold)
             {
-                _cinemachineTargetPitch += _input.GetLook().y * rotationSpeed * Time.deltaTime;
-                _rotationVelocity = _input.GetLook().x * rotationSpeed * Time.deltaTime;
+                float deltaTimeMultiplier = _input.IsCurrentDeviceMouse() ? 1.0f : Time.deltaTime;
+
+                _cinemachineTargetPitch += _input.GetLook().y * rotationSpeed * deltaTimeMultiplier;
+                _rotationVelocity = _input.GetLook().x * rotationSpeed * deltaTimeMultiplier;
 
                 // clamp our pitch rotation
                 _cinemachineTargetPitch = ClampAngle(_cinemachineTargetPitch, bottomClamp, topClamp);
